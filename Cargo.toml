@@ -1,0 +1,9 @@
+[package]
+name = "lorawan"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+defmt = { version = "*", optional = true }
+modular-bitfield = "*"
+get_move = "0.3"
