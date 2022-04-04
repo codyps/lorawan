@@ -1,3 +1,4 @@
+use super::DevAddr;
 use modular_bitfield::prelude::*;
 
 // Class A:
@@ -51,7 +52,9 @@ pub struct MacHeader {
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy, BitfieldSpecifier)]
 pub enum FrameType {
+    /// Join-Request
     JoinRequest = 0b000,
+    /// Join-Accept
     JoinAccept = 0b001,
     UnconfirmedDataUplink = 0b010,
     UnconfirmedDataDownlink = 0b011,
@@ -174,4 +177,25 @@ pub struct JoinRequest {
     /// A given `DevNonce` shall never be reused for a given JoinEUI value. If the end-device can
     /// be power cycled, then `DevNonce` shall be persistent.
     pub dev_nonce: u16,
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub struct JoinAccept {
+    pub join_nonce: [u8; 3],
+    pub net_id: [u8; 3],
+    pub dev_addr: DevAddr,
+    pub dl_settings: DlSettings,
+    pub rx_delay: u8,
+
+    pub cf_list: Option<()>,
+}
+
+#[bitfield]
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub struct DlSettings {
+    pub rfu: bool,
+    pub rx1_dr_offset: B3,
+    pub rx2_data_rate: B4,
 }

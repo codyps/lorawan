@@ -2,6 +2,45 @@
 
 use modular_bitfield::prelude::*;
 
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub enum ReqFromNetworkServer {
+    LinkAdr(LinkAdrReq),
+    DutyCycle(DutyCycleReq),
+    RxParamSetup(RxParamSetupReq),
+    DevStatus,
+    NewChannel(NewChannelReq),
+    RxTimingSetup(RxTimingSetupReq),
+    TxParamSetup(TxParamSetupReq),
+    DlChannel(DlChannelReq),
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub enum ReqFromEndDevice {
+    /// Related: [`MacCommandCid::LinkCheck`], [`Ans::LinkCheck`], [`LinkCheck`]
+    LinkCheck,
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub enum AnsFromNetworkServer {
+    /// Related: [`MacCommandCid::LinkCheck`], [`Req::LinkCheck`], [`LinkCheck`]
+    LinkCheck(LinkCheckAns),
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub enum AnsFromEndDevice {
+    LinkAdr(LinkAdrAns),
+    DutyCycle,
+    RxParamSetup(RxParamSetupAns),
+    DevStatus(DevStatusAns),
+    NewChannel(NewChannelAns),
+    DlChannel(DlChannelAns),
+    RxTimingSetup,
+}
+
 /// Either sent as a FRMPayload with FPort = 0 or piggybacked in the FOpts field.
 /// NOTE: piggybacked = always unencrypted, as FRMPayload = always encrypted
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
@@ -27,7 +66,7 @@ pub enum MacCommandCid {
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
-pub struct LinkCheck {
+pub struct LinkCheckAns {
     pub margin: u8,
     pub gw_count: u8,
 }
@@ -137,7 +176,7 @@ pub struct RxTimingSetupReq {
 #[bitfield]
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
-pub struct TxParamSetup {
+pub struct TxParamSetupReq {
     pub rfu: B2,
     pub downlink_dwell_time: bool,
     pub uplink_dwell_time: bool,

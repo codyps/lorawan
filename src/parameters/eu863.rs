@@ -8,6 +8,25 @@ use super::*;
 pub struct Eu868;
 
 impl Band for Eu868 {
+    fn channel_mask_apply(
+        &self,
+        channel_mask_cntl: u8,
+        channel_mask: u16,
+        current_channel_mask: u128,
+    ) -> Result<u128, ()> {
+        match channel_mask_cntl {
+            0 => {
+                let mask = current_channel_mask & u16::MAX as u128;
+                let mask = mask | channel_mask as u128;
+                Ok(mask)
+            }
+            // RFU
+            1 | 2 | 3 | 4 | 5 => Err(()),
+            6 => Ok(u128::MAX),
+            7..=255 => Err(()),
+        }
+    }
+
     type UpstreamChannels = [ChannelDetails; 3];
 
     // XXX: consider if there's a better representation for upstream/downstream for Bands that have
@@ -28,22 +47,26 @@ impl Band for Eu868 {
 
     // Table 9: EU863-870 Data Rate Backoff table
     fn backoff_data_rate(&self, dr_current: DataRate) -> Option<DataRate> {
-        Some(DataRate(match dr_current.0 {
-            0 => 0,
-            1 => 1,
-            2 => 1,
-            3 => 2,
-            4 => 3,
-            5 => 4,
-            6 => 5,
-            7 => 6,
-            8 => 0,
-            9 => 8,
-            10 => 0,
-            11 => 10,
-            // table ends here
-            _ => return None,
-        }))
+        Some(
+            match dr_current.into() {
+                0 => 0,
+                1 => 1,
+                2 => 1,
+                3 => 2,
+                4 => 3,
+                5 => 4,
+                6 => 5,
+                7 => 6,
+                8 => 0,
+                9 => 8,
+                10 => 0,
+                11 => 10,
+                // table ends here
+                _ => return None,
+            }
+            .try_into()
+            .unwrap(),
+        )
     }
 
     fn cflist_type(&self) -> CflistType {
@@ -90,7 +113,7 @@ impl Band for Eu868 {
     fn beacon_settings(&self) -> &BeaconSettings {
         const BEACON_SETTINGS: BeaconSettings = BeaconSettings {
             cr: CodingRate::Cr4_5,
-            dr: DataRate(3),
+            dr: DataRate::_3,
             polarity: Polarity::Normal,
             channels: ChannelSpec::One(Frequency::from_khz(434_665)),
         };
@@ -115,10 +138,10 @@ impl Band for Eu868 {
         ];
 
         DR_MAP
-            .get(upstream_datarate.0 as usize)
+            .get(Into::<u8>::into(upstream_datarate) as usize)
             .and_then(|v| v.get(rx1_dr_offset as usize))
             .copied()
-            .map(DataRate)
+            .map(|x| x.try_into().unwrap())
     }
 
     /// "By default, the RX1 receive window uses the same channel as the preceding uplink"
@@ -129,7 +152,7 @@ impl Band for Eu868 {
     // rx2 fixed frequency and datarate
     // 869.525/DR0
     fn rx2_window_details(&self) -> (Frequency, DataRate) {
-        (Frequency::from_khz(869_525), DataRate(0))
+        (Frequency::from_khz(869_525), DataRate::_0)
     }
 }
 
@@ -188,8 +211,8 @@ const EU863_CHANNELS: [ChannelDetails; 3] = [
     ChannelDetails {
         bandwidth: Frequency::from_khz(125),
         frequency: Frequency::from_khz(868_100),
-        data_rate_min: DataRate(0),
-        data_rate_max: DataRate(5),
+        data_rate_min: DataRate::_0,
+        data_rate_max: DataRate::_5,
 
         // ???
         coding_rate: None,
@@ -197,8 +220,8 @@ const EU863_CHANNELS: [ChannelDetails; 3] = [
     ChannelDetails {
         bandwidth: Frequency::from_khz(125),
         frequency: Frequency::from_khz(868_300),
-        data_rate_min: DataRate(0),
-        data_rate_max: DataRate(5),
+        data_rate_min: DataRate::_0,
+        data_rate_max: DataRate::_5,
 
         // ???
         coding_rate: None,
@@ -206,8 +229,8 @@ const EU863_CHANNELS: [ChannelDetails; 3] = [
     ChannelDetails {
         bandwidth: Frequency::from_khz(125),
         frequency: Frequency::from_khz(868_500),
-        data_rate_min: DataRate(0),
-        data_rate_max: DataRate(5),
+        data_rate_min: DataRate::_0,
+        data_rate_max: DataRate::_5,
 
         // ???
         coding_rate: None,

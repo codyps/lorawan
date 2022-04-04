@@ -1,3 +1,5 @@
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use get_move::{Chain, Get};
 
 use super::*;
@@ -9,6 +11,23 @@ pub use eu863::Eu868;
 mod us915;
 pub use us915::Us915;
 
+/// "Default Settings" which are recommended values for all regions
+///
+/// Defined in RP002-1.0.3, 2.3, line 394.
+pub mod recommended {
+    use core::time::Duration;
+    pub const JOIN_ACCEPT_DELAY1: Duration = Duration::from_secs(5);
+    pub const JOIN_ACCEPT_DELAY2: Duration = Duration::from_secs(6);
+    pub const MAX_FCNT_GAP: u16 = 16384;
+    pub const ADR_ACK_LIMIT: u8 = 64;
+    pub const ADR_ACK_DELAY: u8 = 32;
+    pub const RETRANSMIT_TIMEOUT_FIXED: Duration = Duration::from_secs(1);
+    pub const RETRANSMIT_TIMEOUT_RANDOM: Duration = Duration::from_secs(2);
+    pub const PING_SLOT_PERIODICITY: u8 = 7;
+    pub const CLASS_B_RESP_TIMEOUT: Duration = Duration::from_secs(8);
+    pub const CLASS_C_RESP_TIMEOUT: Duration = Duration::from_secs(8);
+}
+
 /// Parameters with recommended values consistent across all regions
 ///
 /// If these parameters differ from the recommendations, those parameters shall be communicated to
@@ -19,9 +38,6 @@ pub struct Parameters {
     /// Default: 1s
     pub receive_delay1: Duration,
 
-    /// Default: 2s
-    pub receive_delay2: Duration,
-
     /// Default: 0 (table index)
     pub rx1_dr_offset: usize,
 
@@ -29,16 +45,18 @@ pub struct Parameters {
     pub join_accept_delay1: Duration,
 
     /// Default: 6s
+    // XXX: consider if this can always be derived from `receive_delay1`. It _appears_ to always be
+    // `join_accept_delay1 + 1`, and some documentation indicates this, but not explicitly
     pub join_accept_delay2: Duration,
 
     /// Default: 16384
-    pub max_fcnt_gap: u32,
+    pub max_fcnt_gap: u16,
 
     /// Default: 64
-    pub adr_ack_limit: u32,
+    pub adr_ack_limit: u8,
 
     /// Default: 32
-    pub adr_ack_delay: u32,
+    pub adr_ack_delay: u8,
 
     /// Default: 1s
     pub retransmit_timeout_fixed: Duration,
@@ -63,25 +81,24 @@ impl Default for Parameters {
     fn default() -> Self {
         Self {
             receive_delay1: Duration::from_secs(1),
-            receive_delay2: Duration::from_secs(2),
 
             rx1_dr_offset: 0,
 
-            join_accept_delay1: Duration::from_secs(5),
-            join_accept_delay2: Duration::from_secs(6),
+            join_accept_delay1: recommended::JOIN_ACCEPT_DELAY1,
+            join_accept_delay2: recommended::JOIN_ACCEPT_DELAY2,
 
-            max_fcnt_gap: 16384,
+            max_fcnt_gap: recommended::MAX_FCNT_GAP,
 
-            adr_ack_limit: 64,
-            adr_ack_delay: 32,
+            adr_ack_limit: recommended::ADR_ACK_LIMIT,
+            adr_ack_delay: recommended::ADR_ACK_DELAY,
 
-            retransmit_timeout_fixed: Duration::from_secs(1),
-            retransmit_timeout_random: Duration::from_secs(2),
+            retransmit_timeout_fixed: recommended::RETRANSMIT_TIMEOUT_FIXED,
+            retransmit_timeout_random: recommended::RETRANSMIT_TIMEOUT_RANDOM,
 
             downlink_dwell_time: Duration::from_secs(0),
-            ping_slot_periodicity: 7,
-            class_b_resp_timeout: Duration::from_secs(8),
-            class_c_resp_timeout: Duration::from_secs(8),
+            ping_slot_periodicity: recommended::PING_SLOT_PERIODICITY,
+            class_b_resp_timeout: recommended::CLASS_B_RESP_TIMEOUT,
+            class_c_resp_timeout: recommended::CLASS_C_RESP_TIMEOUT,
         }
     }
 }
@@ -105,14 +122,6 @@ pub struct RegionalParameters {
     pub ping_slot_channel: u8,
 }
 
-/// An index into a per-band table of modulation modes
-///
-/// This index is returned by various functions instead of specifying the modulation directly. Only
-/// values 0 to 15 are valid.
-#[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Copy, Clone)]
-pub struct DataRate(u8);
-
 /// RP002-1.0.3
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
@@ -133,7 +142,15 @@ pub enum BandId {
     AS923_4 = 13,
 }
 
-trait Band {
+pub trait Band {
+    /// Given a `LinkAdrReq` like fields and a 128-bit channel mask, compute the new channel mask
+    fn channel_mask_apply(
+        &self,
+        channel_mask_cntl: u8,
+        channel_mask: u16,
+        current_channel_mask: u128,
+    ) -> Result<u128, ()>;
+
     type UpstreamChannels: Get<Output = ChannelDetails>;
     type DownstreamChannels: Get<Output = ChannelDetails>;
 

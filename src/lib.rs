@@ -15,11 +15,19 @@
 //    - continuously open receive windows, closed only when transmitting
 
 pub mod parameters;
+use core::time::Duration;
+use time_compat::Instant;
+
 pub use parameters::*;
 
 pub mod encode;
 pub mod mac;
 
+/// An index into a per-band table of modulation modes
+///
+/// This index is returned by various functions instead of specifying the modulation directly. Only
+/// values 0 to 15 are valid.
+#[allow(clippy::just_underscores_and_digits)]
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
 pub enum DataRate {
@@ -43,6 +51,67 @@ pub enum DataRate {
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
+pub struct DataRateOutOfRange;
+
+impl TryFrom<u8> for DataRate {
+    type Error = DataRateOutOfRange;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        use DataRate::*;
+        Ok(match value {
+            0 => _0,
+            1 => _1,
+            2 => _2,
+            3 => _3,
+            4 => _4,
+            5 => _5,
+            6 => _6,
+            7 => _7,
+            8 => _8,
+            9 => _9,
+            10 => _10,
+            11 => _11,
+            12 => _12,
+            13 => _13,
+            14 => _14,
+            15 => _15,
+            _ => return Err(DataRateOutOfRange),
+        })
+    }
+}
+
+impl From<DataRate> for u8 {
+    // XXX: this allow probably shouldn't be required here, but it seems like clippy is
+    // misinterpreting these enum variants as plain match patterns, causing it to think we're
+    // declaring a bunch of weird names.
+    // NOTE: also, placing this just on the `match` block doesn't work. Seems to be another clippy
+    // issue/limitation
+    #[allow(clippy::just_underscores_and_digits)]
+    fn from(v: DataRate) -> Self {
+        use DataRate::*;
+        match v {
+            _0 => 0,
+            _1 => 1,
+            _2 => 2,
+            _3 => 3,
+            _4 => 4,
+            _5 => 5,
+            _6 => 6,
+            _7 => 7,
+            _8 => 8,
+            _9 => 9,
+            _10 => 10,
+            _11 => 11,
+            _12 => 12,
+            _13 => 13,
+            _14 => 14,
+            _15 => 15,
+        }
+    }
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
 pub enum CodingRate {
     Cr1_3,
     Cr2_3,
@@ -60,7 +129,7 @@ pub struct BackoffDetails {
 }
 
 // "4.3.1.1 Adaptive data-rate control in frame header (ADR, ADRACKReq in FCtrl)"
-pub fn data_rate_backoff(params: &Parameters, adr_ack_cnt: u32) -> BackoffDetails {
+pub fn data_rate_backoff(params: &Parameters, adr_ack_cnt: u8) -> BackoffDetails {
     if adr_ack_cnt < params.adr_ack_limit {
         return BackoffDetails {
             data_rate: DataRate::_0,
@@ -98,9 +167,26 @@ pub struct DevAddr {
     pub addr: u32,
 }
 
+/// What does an EndDevice need to allow clients to do?
+///
+///  - ClassB: allow changing the periodicity of ping slots (at any time)
+///  - ClassB: notify about synchronization with the Network being lost, allow the user to
+///    determine the responce (for example, re-enabling ClassB
+///
+/// What does an EndDevice need to do automatically?
+///
+///  - ClassB: handle `PingSlotChannelReq` and automatically reply with `PingSlotChannelAns`
+///  - ClassB: schedule radio reception durring ping-slot times. Must account for clock drift
+///  -
+///
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
 pub struct EndDevice {
+    /// The current band in use
+    // NOTE: using the enum allows us to avoid having either dyn pointers & box or having to make
+    // ggthis generic over regions (preventing region transitions unless box/dyn is used)
+    pub band_id: Option<parameters::BandId>,
+
     /// FCntUp: Incremented by an end-device when a data frame is transmitted to a Network Server (uplink).
     ///
     /// - Over the air activated devices (OOTA): set to 0 when a JoinAccept is succesfully processed
@@ -110,6 +196,163 @@ pub struct EndDevice {
 
     /// XXX
     pub adr_ack_cnt: u32,
+
+    /// ClassB only
+    pub class_b_resp_timeout: Duration,
+
+    /// delays since a previous uplink where the EndDevice will have it's reciever enabled and be
+    /// able to recieve downlink from the Network Server.
+    ///
+    /// NOTE: it happens that the default for all regions is currently 1s. This is only a
+    /// recomendation though, and we should expect that at some point this will become a
+    /// band/region parameter.
+    pub receive_delay1: Duration,
+
+    /// transmit time in the past from which `receive_delay1` and `receive_delay2` are counted.
+    /// Determines when we're going to open the class A recv windows (based on those 2 delays).
+    pub previous_transmit_time: Option<Instant>,
+
+    pub num_transmits: u8,
+
+    ///
+    pub maximum_tx_power: Option<u8>,
+
+    /// bitmask indicating if a uplink channel may be used (bit is set if channel is usable). By
+    /// default, all channels are considered usable.
+    ///
+    /// NOTE: specified regions/bands only appear to have up to 72 channels, allowing a 128 bit value
+    /// to represent a bitmask of all possible channels. It might be possible to shrink this
+    /// slightly be using `(u64, u16)` or similar if desirable.
+    pub uplink_channel_mask: u128,
+}
+
+impl Default for EndDevice {
+    fn default() -> Self {
+        Self {
+            band_id: None,
+            frame_count_uplink: 0,
+            adr_ack_cnt: 0,
+            // FIXME: not sure this is the right default,
+            class_b_resp_timeout: Duration::from_secs(1),
+
+            receive_delay1: Duration::from_secs(1),
+            previous_transmit_time: None,
+
+            // FIXME: arbitrary. this should be from the spec instead
+            num_transmits: 0,
+
+            maximum_tx_power: None,
+            uplink_channel_mask: u128::MAX,
+        }
+    }
+}
+
+impl EndDevice {
+    // NOTE: this function exists to allow us to change receive_delay1 to be a band/region
+    // defaulted parameter (which it technically is in the specification). All regions at the
+    // moment define it to be the same value (1s) though.
+    pub fn receive_delay1(&self) -> Duration {
+        self.receive_delay1
+    }
+
+    pub fn receive_delay2(&self) -> Duration {
+        Duration::from_secs(1) + self.receive_delay1()
+    }
+
+    pub fn band(&self) -> Option<impl parameters::Band> {
+        Some(match self.band_id {
+            Some(parameters::BandId::US915) => parameters::Us915,
+            _ => return None,
+        })
+    }
+
+    /// Change the band_id for this instance
+    ///
+    /// This might be done in responce to user input that the band to operate in has changed, or if
+    /// the location of the device has changed (or been discovered) to lie within a region with a
+    /// particular band (location to band mapping is not currently included in this library)
+    pub fn set_band_id(&mut self, band_id: Option<BandId>) {
+        // TODO: this _probably_ means we need to reset some internal state machines (as we're
+        // _probably_ no longer Joined) and as a result a need to re-schedule uplinks and downlinks
+        // & reconfigure the radio hardware to support that.
+        self.band_id = band_id;
+    }
+
+    pub fn send_uplink_unconfirmed(&mut self, payload: &[u8]) -> Result<(), ()> {
+        // TODO: schedule a transmition as soon as permitted
+        // TODO: construct packet around payload
+        todo!()
+    }
+
+    pub fn send_uplink_confirmed(&mut self, payload: &[u8]) -> Result<(), ()> {
+        todo!()
+    }
+
+    pub fn process_mac_request(
+        &mut self,
+        // TODO: consider having `message_recv_meta` and `mac_message` be the contained in the same structure
+        message_recv_meta: MessageRecvMeta,
+        mac_message: mac::ReqFromNetworkServer,
+    ) -> Result<(), ()> {
+        match mac_message {
+            mac::ReqFromNetworkServer::LinkAdr(link_adr) => {
+                if link_adr.tx_power() != 0xf {
+                    // FIXME: map this to some meaningful units
+                    self.maximum_tx_power = Some(link_adr.tx_power());
+                }
+
+                if let Some(band) = self.band() {
+                    // TODO: consider what should be done if we lack a band/region
+
+                    self.uplink_channel_mask = band
+                        .channel_mask_apply(
+                            link_adr.channel_mask_ctrl(),
+                            link_adr.ch_mask(),
+                            self.uplink_channel_mask,
+                        )
+                        .unwrap();
+                }
+
+                // link_adr.data_rate
+                // link_adr.redudancy
+                self.send_mac_answer(mac::AnsFromEndDevice::LinkAdr(mac::LinkAdrAns::new()))
+            }
+            mac::ReqFromNetworkServer::DevStatus => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::DutyCycle(duty_cycle) => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::DlChannel(dl_channel) => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::NewChannel(new_channel_req) => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::RxParamSetup(rx_param_setup_req) => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::TxParamSetup(tx_param_setup_req) => {
+                todo!();
+            }
+            mac::ReqFromNetworkServer::RxTimingSetup(rx_timing_setup_req) => {
+                todo!();
+            }
+        }
+    }
+
+    pub fn send_mac_answer(&mut self, mac_answer: mac::AnsFromEndDevice) -> Result<(), ()> {
+        todo!()
+    }
+}
+
+/// Meta radio reciever provides about a recieved message
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub struct MessageRecvMeta {
+    pub power_db: u32,
+    pub time: Instant,
+    // TODO: consider if in some cases we need to record modulation information here
 }
 
 /// Representation of the `Network Server` view of a device
@@ -146,4 +389,60 @@ pub struct JoinServer {
     /// "Join Server keeps track of the last DevNonce value used by the end-device and ignores
     /// Join-Requests if the DevNonce is not incremented
     pub dev_nonce: u16,
+}
+
+/// Calculate the NwkSKey on the end-device
+pub fn end_device_network_skey(join_nonce: [u8; 3], net_id: [u8; 3], dev_nonce: [u8; 3]) -> () {
+    // NwkSKey = aes128_encrypt(AppKey, 0x01 | JoinNonce | NetID | DevNonce | pad_16)
+    todo!()
+}
+
+pub fn end_device_app_skey(join_nonce: [u8; 3], net_id: [u8; 3], dev_nonce: [u8; 3]) -> () {
+    // AppSKey = aes128_encrypt(AppKey, 0x02 | JoinNonce | NetID | DevNonce | pad_16)
+    todo!()
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub struct MulticastGroup {
+    pub network_address: [u8; 4],
+    // FIXME: not sure of the type here
+    pub session_keys: (),
+    pub downlink_frame_counter: u32,
+}
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub struct NetworkServer {}
+
+impl NetworkServer {
+    pub fn process_mac_request(
+        &mut self,
+        // TODO: consider having `message_recv_meta` and `mac_message` be the contained in the same structure
+        message_recv_meta: MessageRecvMeta,
+        mac_message: mac::ReqFromEndDevice,
+    ) -> Result<(), ()> {
+        match mac_message {
+            // FIXME: for `NetworkServer`, they expect to recv duplicate packets from different
+            // gateways, and then place that in the alert. This suggests that don't want to send
+            // the answer imediately and instead accumulate these
+            mac::ReqFromEndDevice::LinkCheck => {
+                // FIXME: unclear that we want to result to be returned immediately. This is at
+                // it's core a queuing operation, and we won't send immediately. In the case of
+                // send failure (for whatever reason) it _seems_ that we can likely ignore any
+                // actual transmit errors
+                //
+                // FIXME: this isn't actually a command the secification says is implimented by the
+                // end-device.
+                self.send_mac_answer(mac::AnsFromNetworkServer::LinkCheck(mac::LinkCheckAns {
+                    margin: 0,
+                    gw_count: 1,
+                }))
+            }
+        }
+    }
+
+    pub fn send_mac_answer(&mut self, _mac_answer: mac::AnsFromNetworkServer) -> Result<(), ()> {
+        todo!()
+    }
 }

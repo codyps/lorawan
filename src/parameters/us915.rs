@@ -8,6 +8,48 @@ use super::*;
 pub struct Us915;
 
 impl Band for Us915 {
+    fn channel_mask_apply(
+        &self,
+        channel_mask_cntl: u8,
+        channel_mask: u16,
+        current_channel_mask: u128,
+    ) -> Result<u128, ()> {
+        match channel_mask_cntl {
+            0..=4 => {
+                let shift = channel_mask_cntl * 16;
+                let mask = current_channel_mask & (u16::MAX as u128) << shift;
+                let mask = mask | (channel_mask as u128) << shift;
+                Ok(mask)
+            }
+            5 => {
+                // TODO: there's probably a nice way to simplify this
+                let mut mask = current_channel_mask;
+                for i in 0..7 {
+                    let shift = i * 16;
+                    let m = (u16::MAX as u128) << shift;
+                    if i & channel_mask != 0 {
+                        mask |= m;
+                    } else {
+                        mask &= m;
+                    }
+                }
+
+                Ok(mask)
+            }
+            6 | 7 => {
+                // the first 64 channels are 128kHz in the standard channel plan
+                let mask_125khz = if channel_mask_cntl == 6 {
+                    u64::MAX as u128
+                } else {
+                    0
+                };
+
+                Ok(mask_125khz | ((channel_mask as u128) << 64))
+            }
+            8..=255 => Err(()),
+        }
+    }
+
     type UpstreamChannels = Chain<ChannelPlan, ChannelPlan>;
     fn upstream_channels(&self) -> &Self::UpstreamChannels {
         &US915_CHANNELS.upstream
@@ -23,16 +65,20 @@ impl Band for Us915 {
     }
 
     fn backoff_data_rate(&self, dr_current: DataRate) -> Option<DataRate> {
-        Some(DataRate(match dr_current.0 {
-            0 => 0,
-            1 => 0,
-            2 => 1,
-            3 => 2,
-            4 => 3,
-            5 => 0,
-            6 => 5,
-            _ => return None,
-        }))
+        Some(
+            match dr_current.into() {
+                0 => 0,
+                1 => 0,
+                2 => 1,
+                3 => 2,
+                4 => 3,
+                5 => 0,
+                6 => 5,
+                7..=255 => return None,
+            }
+            .try_into()
+            .unwrap(),
+        )
     }
 
     fn cflist_type(&self) -> CflistType {
@@ -55,7 +101,7 @@ impl Band for Us915 {
             11 => 230,
             12 => 230,
             13 => 230,
-            _ => return None,
+            14..=255 => return None,
         })
     }
 
@@ -75,13 +121,13 @@ impl Band for Us915 {
             11 => 250,
             12 => 250,
             13 => 250,
-            _ => return None,
+            14..=255 => return None,
         })
     }
 
     fn beacon_settings(&self) -> &BeaconSettings {
         const BEACON_SETTINGS: BeaconSettings = BeaconSettings {
-            dr: DataRate(4),
+            dr: DataRate::_4,
             cr: CodingRate::Cr4_5,
             polarity: Polarity::Normal,
             channels: ChannelSpec::AllDownstream,
@@ -105,14 +151,14 @@ impl Band for Us915 {
         ];
 
         DR_MAP
-            .get(upstream_datarate.0 as usize)
+            .get(Into::<u8>::into(upstream_datarate) as usize)
             .and_then(|v| v.get(rx1_dr_offset as usize))
             .copied()
-            .map(DataRate)
+            .map(|x| x.try_into().unwrap())
     }
 
     fn rx2_window_details(&self) -> (Frequency, DataRate) {
-        (Frequency::from_khz(923_300), DataRate(0))
+        (Frequency::from_khz(923_300), DataRate::_0)
     }
 }
 
@@ -134,8 +180,8 @@ const US915_CHANNELS: Channels<Chain<ChannelPlan, ChannelPlan>, ChannelPlan> = C
 
             bandwidth: Frequency::from_khz(125),
 
-            data_rate_min: DataRate(0),
-            data_rate_max: DataRate(3),
+            data_rate_min: DataRate::_0,
+            data_rate_max: DataRate::_3,
             coding_rate: Some(CodingRate::Cr4_5),
         },
         ChannelPlan {
@@ -145,8 +191,8 @@ const US915_CHANNELS: Channels<Chain<ChannelPlan, ChannelPlan>, ChannelPlan> = C
 
             // FIXME: 500kHZ @ Dr4 or 1.5233MHZ @ LR-FHSS
             bandwidth: Frequency::from_khz(500),
-            data_rate_max: DataRate(4),
-            data_rate_min: DataRate(4),
+            data_rate_max: DataRate::_4,
+            data_rate_min: DataRate::_4,
             coding_rate: None,
         },
     ),
@@ -158,8 +204,8 @@ const US915_CHANNELS: Channels<Chain<ChannelPlan, ChannelPlan>, ChannelPlan> = C
 
         bandwidth: Frequency::from_khz(600),
 
-        data_rate_max: DataRate(13),
-        data_rate_min: DataRate(8),
+        data_rate_max: DataRate::_13,
+        data_rate_min: DataRate::_8,
         coding_rate: None,
     },
 };

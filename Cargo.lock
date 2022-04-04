@@ -122,6 +122,7 @@ dependencies = [
  "defmt",
  "get_move",
  "modular-bitfield",
+ "time_compat",
  "ufmt",
 ]
 
@@ -210,6 +211,12 @@ dependencies = [
  "quote",
  "unicode-xid",
 ]
+
+[[package]]
+name = "time_compat"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd12e86dbc4f097fafc6edee89814f2174ad7569a2ee2cad7aad9178083030e1"
 
 [[package]]
 name = "typenum"
