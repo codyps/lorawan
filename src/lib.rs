@@ -15,13 +15,57 @@
 //    - continuously open receive windows, closed only when transmitting
 
 pub mod parameters;
-use core::time::Duration;
-use time_compat::Instant;
+
+// XXX: consider using the embedded_time Duration instead of core::time
+use core::{marker::PhantomData, time::Duration};
+use embedded_time::{Clock, Instant};
 
 pub use parameters::*;
 
 pub mod encode;
 pub mod mac;
+
+pub mod beacon;
+pub use beacon::Beacon;
+
+#[cfg_attr(features = "defmt", derive(defmt::Debug))]
+#[derive(Debug, Clone, Copy)]
+pub enum Sf {
+    _8,
+    _9,
+    _10,
+    _11,
+    _12,
+}
+
+const BEACON_BASE_SIZE: usize = 1 + 4 + 2 + 7 + 2;
+
+impl Sf {
+    pub const fn beacon_rfu1_bytes(&self) -> usize {
+        match *self {
+            Sf::_8 => 0,
+            Sf::_9 => 1,
+            Sf::_10 => 2,
+            Sf::_11 => 3,
+            Sf::_12 => 4,
+        }
+    }
+
+    pub const fn beacon_rfu2_bytes(&self) -> usize {
+        match *self {
+            Sf::_8 => 3,
+            Sf::_9 => 0,
+            Sf::_10 => 1,
+            Sf::_11 => 2,
+            Sf::_12 => 3,
+        }
+    }
+
+    /// 13.2 Beacon Frame Format
+    pub const fn beacon_bytes(&self) -> usize {
+        BEACON_BASE_SIZE + self.beacon_rfu1_bytes() + self.beacon_rfu2_bytes()
+    }
+}
 
 /// An index into a per-band table of modulation modes
 ///
@@ -167,6 +211,9 @@ pub struct DevAddr {
     pub addr: u32,
 }
 
+///
+/// `Clock` must be a monotonic clock of with variance of XXX and accuracy of XXX
+///
 /// What does an EndDevice need to allow clients to do?
 ///
 ///  - ClassB: allow changing the periodicity of ping slots (at any time)
@@ -180,8 +227,8 @@ pub struct DevAddr {
 ///  -
 ///
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
-pub struct EndDevice {
+#[derive(Debug, Clone)]
+pub struct EndDevice<C: Clock> {
     /// The current band in use
     // NOTE: using the enum allows us to avoid having either dyn pointers & box or having to make
     // ggthis generic over regions (preventing region transitions unless box/dyn is used)
@@ -210,7 +257,7 @@ pub struct EndDevice {
 
     /// transmit time in the past from which `receive_delay1` and `receive_delay2` are counted.
     /// Determines when we're going to open the class A recv windows (based on those 2 delays).
-    pub previous_transmit_time: Option<Instant>,
+    pub previous_transmit_time: Option<Instant<C>>,
 
     pub num_transmits: u8,
 
@@ -224,9 +271,14 @@ pub struct EndDevice {
     /// to represent a bitmask of all possible channels. It might be possible to shrink this
     /// slightly be using `(u64, u16)` or similar if desirable.
     pub uplink_channel_mask: u128,
+
+    /// Set by the `DutyCycleReq` mac command from the Network Server.
+    ///
+    /// FIXME: needs units.
+    pub max_duty_cycle: u8,
 }
 
-impl Default for EndDevice {
+impl<C: Clock> Default for EndDevice<C> {
     fn default() -> Self {
         Self {
             band_id: None,
@@ -243,11 +295,15 @@ impl Default for EndDevice {
 
             maximum_tx_power: None,
             uplink_channel_mask: u128::MAX,
+            max_duty_cycle: 0,
         }
     }
 }
 
-impl EndDevice {
+impl<C> EndDevice<C>
+where
+    C: Clock,
+{
     // NOTE: this function exists to allow us to change receive_delay1 to be a band/region
     // defaulted parameter (which it technically is in the specification). All regions at the
     // moment define it to be the same value (1s) though.
@@ -291,7 +347,7 @@ impl EndDevice {
     pub fn process_mac_request(
         &mut self,
         // TODO: consider having `message_recv_meta` and `mac_message` be the contained in the same structure
-        message_recv_meta: MessageRecvMeta,
+        message_recv_meta: MessageRecvMeta<C>,
         mac_message: mac::ReqFromNetworkServer,
     ) -> Result<(), ()> {
         match mac_message {
@@ -301,27 +357,44 @@ impl EndDevice {
                     self.maximum_tx_power = Some(link_adr.tx_power());
                 }
 
-                if let Some(band) = self.band() {
+                let channel_mask_ack = if let Some(band) = self.band() {
                     // TODO: consider what should be done if we lack a band/region
 
-                    self.uplink_channel_mask = band
-                        .channel_mask_apply(
-                            link_adr.channel_mask_ctrl(),
-                            link_adr.ch_mask(),
-                            self.uplink_channel_mask,
-                        )
-                        .unwrap();
-                }
+                    // TODO: must check if all channels would be disabled
+                    // TODO: must check if the channel mask is incompatible with the resulting data
+                    // rate or TX power
+                    // TODO: must check if the channel mask enables a yet undefined channel
+                    if let Ok(uplink_channel_mask) = band.channel_mask_apply(
+                        link_adr.channel_mask_ctrl(),
+                        link_adr.ch_mask(),
+                        self.uplink_channel_mask,
+                    ) {
+                        self.uplink_channel_mask = uplink_channel_mask;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
 
-                // link_adr.data_rate
-                // link_adr.redudancy
-                self.send_mac_answer(mac::AnsFromEndDevice::LinkAdr(mac::LinkAdrAns::new()))
+                // TODO: link_adr.data_rate
+                // TODO: link_adr.redudancy
+
+                self.send_mac_answer(mac::AnsFromEndDevice::LinkAdr(
+                    mac::LinkAdrAns::new()
+                        .with_channel_mask_ack(channel_mask_ack)
+                        .with_power_ack(true)
+                        .with_data_rate_ack(true),
+                ))
             }
             mac::ReqFromNetworkServer::DevStatus => {
                 todo!();
             }
             mac::ReqFromNetworkServer::DutyCycle(duty_cycle) => {
-                todo!();
+                self.max_duty_cycle = duty_cycle.max_duty_cycle();
+
+                self.send_mac_answer(mac::AnsFromEndDevice::DutyCycle)
             }
             mac::ReqFromNetworkServer::DlChannel(dl_channel) => {
                 todo!();
@@ -348,10 +421,10 @@ impl EndDevice {
 
 /// Meta radio reciever provides about a recieved message
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
-pub struct MessageRecvMeta {
+#[derive(Debug, Clone)]
+pub struct MessageRecvMeta<C: Clock> {
     pub power_db: u32,
-    pub time: Instant,
+    pub time: Instant<C>,
     // TODO: consider if in some cases we need to record modulation information here
 }
 
@@ -413,13 +486,15 @@ pub struct MulticastGroup {
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]
-pub struct NetworkServer {}
+pub struct NetworkServer<C> {
+    _clock: PhantomData<C>,
+}
 
-impl NetworkServer {
+impl<C: Clock> NetworkServer<C> {
     pub fn process_mac_request(
         &mut self,
         // TODO: consider having `message_recv_meta` and `mac_message` be the contained in the same structure
-        message_recv_meta: MessageRecvMeta,
+        message_recv_meta: MessageRecvMeta<C>,
         mac_message: mac::ReqFromEndDevice,
     ) -> Result<(), ()> {
         match mac_message {

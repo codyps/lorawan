@@ -13,4 +13,5 @@ ufmt = { version = "0.1", optional = true }
 modular-bitfield = "*"
 get_move = "0.3"
 aes = "0.8"
-time_compat = "1"
+embedded-time = "*"
+crc-0x8810 = "*"
