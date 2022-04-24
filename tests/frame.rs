@@ -1,3 +1,5 @@
+use lorawan::beacon::GwSpecificKind;
+
 /// LoRaWAN® L2 1.0.4 Specification
 /// 13.4 Beacon Encoding Examples
 ///
@@ -14,6 +16,17 @@ fn beacon_eu868_sf_9() {
 
     let v = lorawan::Beacon::parse_beacon(lorawan::Sf::_9, &beacon)
         .expect("beacon did not parse properly");
+
+    assert_eq!(v.param.prec(), 0);
+    assert_eq!(v.time, 0xCC020000);
+    assert_eq!(
+        v.gw_specific,
+        GwSpecificKind::Gps {
+            antenna: lorawan::beacon::Antenna::First,
+            lat: 0x002001,
+            long: 0x038100
+        }
+    );
 }
 
 /// LoRaWAN® L2 1.0.4 Specification
@@ -31,4 +44,15 @@ fn beacon_us915_sf_10() {
 
     let v = lorawan::Beacon::parse_beacon(lorawan::Sf::_10, &beacon)
         .expect("beacon did not parse properly");
+
+    assert_eq!(v.param.prec(), 0);
+    assert_eq!(v.time, 0xCC020000);
+    assert_eq!(
+        v.gw_specific,
+        GwSpecificKind::Gps {
+            antenna: lorawan::beacon::Antenna::First,
+            lat: 0x002001,
+            long: 0x038100
+        }
+    );
 }

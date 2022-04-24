@@ -22,23 +22,23 @@ use modular_bitfield::prelude::*;
 
 // TODO: consider if we should pack crcs and/or RFU fields into Beacon
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beacon {
-    param: Param,
-    time: u32,
-    gw_specific: GwSpecific,
+    pub param: Param,
+    pub time: u32,
+    pub gw_specific: GwSpecificKind,
 }
 
 #[bitfield]
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Param {
-    rfu: B6,
-    prec: B2,
+    pub rfu: B6,
+    pub prec: B2,
 }
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     WrongSize { need: usize, actual: usize },
     Crc1Wrong,
@@ -70,7 +70,7 @@ impl Beacon {
             return Err(Error::Crc1Wrong);
         }
 
-        let gw_specific = &rem[0..7];
+        let gw_specific = GwSpecificKind::from_bytes(rem[0..7].try_into().unwrap());
         let rem = &rem[7..];
         let rfu2_bytes_ct = sf.beacon_rfu2_bytes();
         let _rfu2_bytes = &rem[0..rfu2_bytes_ct];
@@ -87,21 +87,19 @@ impl Beacon {
         Ok(Beacon {
             param: Param { bytes: [param] },
             time,
-            gw_specific: GwSpecific {
-                bytes: gw_specific.try_into().unwrap(),
-            },
+            gw_specific,
         })
     }
 }
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GwSpecific {
     bytes: [u8; 7],
 }
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GwSpecificKind {
     Gps {
         antenna: Antenna,
@@ -170,7 +168,7 @@ impl GwSpecificKind {
 }
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Antenna {
     First,
     Second,
@@ -178,7 +176,7 @@ pub enum Antenna {
 }
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InfoDesc {
     GpsCoordinate { antenna: Antenna },
     NetIdAndGatewayId,
