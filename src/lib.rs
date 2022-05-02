@@ -22,11 +22,14 @@ use embedded_time::{Clock, Instant};
 
 pub use parameters::*;
 
-pub mod encode;
 pub mod mac;
+pub mod mac_frame;
+mod serde;
 
 pub mod beacon;
 pub use beacon::Beacon;
+
+// epoch of time is Jan 6, 1980 (GPS)
 
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Debug, Clone, Copy)]

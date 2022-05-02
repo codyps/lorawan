@@ -1,4 +1,5 @@
-use crate::Sf;
+use crate::serde::*;
+use crate::{DevAddr, Sf};
 use crc_0x8810::CRC_16_LORA;
 use modular_bitfield::prelude::*;
 
@@ -122,20 +123,6 @@ pub enum GwSpecificKind {
     },
 }
 
-fn u24_from_le_bytes(bytes: [u8; 3]) -> u32 {
-    ((bytes[2] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[0] as u32)
-}
-
-fn u24_to_le_bytes(v: u32) -> [u8; 3] {
-    assert!((v & 0xFF_00_00_00) == 0);
-
-    [
-        (v & 0xff) as u8,
-        ((v & 0xff_00) >> 8) as u8,
-        ((v & 0xff_00_00) >> 16) as u8,
-    ]
-}
-
 impl GwSpecificKind {
     pub fn as_bytes(&self) -> [u8; 7] {
         todo!()
@@ -202,3 +189,16 @@ impl InfoDesc {
         }
     }
 }
+
+pub const T_BEACON_DELAY: embedded_time::duration::Microseconds =
+    embedded_time::duration::Microseconds(1_500u32);
+
+pub const BEACON_PERIOD: embedded_time::duration::Seconds =
+    embedded_time::duration::Seconds(128u32);
+
+/*
+// what is NbChannel
+fn frequency_hopping_beacon_channel(dev_addr: DevAddr, beacon_time: u32) -> u32 {
+    dev_addr.addr + (beacon_time / BEACON_PERIOD) % nb_channel
+}
+    */

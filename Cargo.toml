@@ -15,3 +15,6 @@ get_move = "0.3"
 aes = "0.8"
 embedded-time = "*"
 crc-0x8810 = "*"
+
+[dev-dependencies]
+hex = "0.4"

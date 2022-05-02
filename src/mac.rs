@@ -1,4 +1,4 @@
-//! Mac level commands
+//! Mac level commands and logic
 
 use modular_bitfield::prelude::*;
 
