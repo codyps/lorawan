@@ -4,6 +4,8 @@
 
 use super::DevAddr;
 use crate::serde::*;
+use aes::Aes128;
+use cmac::{Cmac, Mac};
 use modular_bitfield::prelude::*;
 
 // Class A:
@@ -105,17 +107,29 @@ impl<'a> PhyPayload<'a> {
         &self.bytes[1..end]
     }
 
-    pub fn mic(&self) -> u32 {
+    pub fn mic(&self) -> [u8; 4] {
         let start = self.bytes.len() - 4;
-        u32::from_be_bytes(self.bytes[start..].try_into().unwrap())
+        self.bytes[start..].try_into().unwrap()
     }
 
-    pub fn calculate_mic(&self) -> [u32; 4] {
-        // for Join-Request:
-        //   CMAC = aes128_cmac(AppKey, MHDR | JoinEUI | DevEUI | DevNonce)
-        //   MIC = CMAC[0..3]
-        //
-        todo!()
+    pub fn mic_expected(&self, app_key: &[u8]) -> [u8; 4] {
+        let mhdr = self.mac_header();
+        match mhdr.ftype() {
+            // NOTE: this is not required for end-devices
+            FrameType::JoinRequest => {
+                // for Join-Request:
+                //   CMAC = aes128_cmac(AppKey, MHDR | JoinEUI | DevEUI | DevNonce)
+                //   MIC = CMAC[0..3]
+                //
+                let mut mac = Cmac::<Aes128>::new_from_slice(app_key).unwrap();
+                let end = self.bytes.len() - 4;
+                mac.update(&self.bytes[..end]);
+                mac.finalize().into_bytes().as_slice()[..4]
+                    .try_into()
+                    .unwrap()
+            }
+            _ => todo!(),
+        }
     }
 
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, PhyPayloadDecodeError> {
