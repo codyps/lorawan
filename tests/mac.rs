@@ -28,7 +28,7 @@ fn join_request() {
 
     let pkt = lorawan::mac_frame::PhyPayload::from_bytes(&buf[..]).unwrap();
 
-    let app_skey = hex::decode("B6B53F4A168A7A88BDF7EA135CE9CFCA").unwrap();
+    let app_key = hex::decode("B6B53F4A168A7A88BDF7EA135CE9CFCA").unwrap();
 
     assert_eq!(
         pkt.mac_header(),
@@ -37,7 +37,7 @@ fn join_request() {
 
     assert_eq!(u32::from_be_bytes(pkt.mic()), 0x030AF2C9);
 
-    assert_eq!(u32::from_be_bytes(pkt.mic_expected(&app_skey)), 0x030AF2C9);
+    assert_eq!(u32::from_be_bytes(pkt.mic_expected(&app_key)), 0x030AF2C9);
 
     let _payload = if let lorawan::mac_frame::Payload::JoinRequest(a) = pkt.payload().unwrap() {
         a

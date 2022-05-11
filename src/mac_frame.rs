@@ -245,6 +245,7 @@ pub struct UplinkFrameControl {
 pub enum Payload<'a> {
     MacPayload(MacPayload<'a>),
     JoinRequest(JoinRequest<'a>),
+    // FIXME: JoinAccept needs to be decrypted!
     JoinAccept(JoinAccept<'a>),
 }
 
@@ -453,6 +454,14 @@ impl<'a> JoinAccept<'a> {
         } else {
             Some(&self.bytes[need..])
         }
+    }
+
+    pub fn calculate_nwkskey(&self) -> [u8; 16] {
+        todo!()
+    }
+
+    pub fn calculate_appskey(&self) -> [u8; 16] {
+        todo!()
     }
 }
 
