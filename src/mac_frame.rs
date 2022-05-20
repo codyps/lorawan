@@ -36,8 +36,8 @@ use modular_bitfield::prelude::*;
 ///
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Clone, Copy)]
-pub struct PhyPayload<'a> {
-    bytes: &'a [u8],
+pub struct PhyPayload<T> {
+    bytes: T,
 }
 
 /// ```norust
@@ -53,7 +53,7 @@ pub enum PhyPayloadDecodeError {
     SmallerThanMinSize { have: usize, need: usize },
 }
 
-impl<'a> core::fmt::Debug for PhyPayload<'a> {
+impl<T: AsRef<[u8]>> core::fmt::Debug for PhyPayload<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PhyPayload")
             .field("mac_header", &self.mac_header())
@@ -82,12 +82,16 @@ impl From<JoinAcceptParseError> for PayloadParseError {
     }
 }
 
-impl<'a> PhyPayload<'a> {
-    pub fn mac_header(&self) -> MacHeader {
-        MacHeader::from_bytes(self.bytes[0..1].try_into().unwrap())
+impl<T: AsRef<[u8]>> PhyPayload<T> {
+    fn bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
     }
 
-    pub fn payload(&self) -> Result<Payload<'a>, PayloadParseError> {
+    pub fn mac_header(&self) -> MacHeader {
+        MacHeader::from_bytes(self.bytes()[0..1].try_into().unwrap())
+    }
+
+    pub fn payload(&self) -> Result<Payload<'_>, PayloadParseError> {
         let mh = self.mac_header();
         if mh.major() != 0 {
             return Err(PayloadParseError::UnknownMajor { major: mh.major() });
@@ -102,16 +106,33 @@ impl<'a> PhyPayload<'a> {
         })
     }
 
-    pub fn payload_bytes(&self) -> &'a [u8] {
-        let end = self.bytes.len() - 4;
-        &self.bytes[1..end]
+    pub fn payload_bytes(&self) -> &[u8] {
+        let end = self.bytes().len() - 4;
+        &self.bytes()[1..end]
     }
 
     pub fn mic(&self) -> [u8; 4] {
-        let start = self.bytes.len() - 4;
-        self.bytes[start..].try_into().unwrap()
+        let start = self.bytes().len() - 4;
+        self.bytes()[start..].try_into().unwrap()
     }
 
+    /*
+    JoinNonce is a non-repeating value provided by the Join Server and used by the end-device
+    to derive the two session keys NwkSKey and AppSKey, which SHALL be calculated as
+    follows:10
+
+    NwkSKey = aes128_encrypt(AppKey, 0x01 | JoinNonce | NetID | DevNonce | pad16)
+    AppSKey = aes128_encrypt(AppKey, 0x02 | JoinNonce | NetID | DevNonce | pad16)
+    The MIC value for a Join-Accept frame SHALL be calculated as follows:11
+
+    CMAC = aes128_cmac(AppKey, MHDR | JoinNonce | NetID | DevAddr |
+    DLSettings | RXDelay | CFList)
+    MIC = CMAC[0..3]
+    The Join-Accept frame itself SHALL be encrypted with the AppKey as follows:
+
+    aes128_decrypt(AppKey, JoinNonce | NetID | DevAddr | DLSettings | RXDelay |
+    CFList | MIC)
+    */
     pub fn mic_expected(&self, app_key: &[u8]) -> [u8; 4] {
         let mhdr = self.mac_header();
         match mhdr.ftype() {
@@ -122,8 +143,20 @@ impl<'a> PhyPayload<'a> {
                 //   MIC = CMAC[0..3]
                 //
                 let mut mac = Cmac::<Aes128>::new_from_slice(app_key).unwrap();
-                let end = self.bytes.len() - 4;
-                mac.update(&self.bytes[..end]);
+                let end = self.bytes().len() - 4;
+                mac.update(&self.bytes()[..end]);
+                mac.finalize().into_bytes().as_slice()[..4]
+                    .try_into()
+                    .unwrap()
+            }
+            FrameType::JoinAccept => {
+                // CMAC = aes128_cmac(AppKey, MHDR | JoinNonce | NetID | DevAddr | DLSettings | RXDelay | CFList)
+                // MIC = CMAC[0..3]
+                //
+                // FIXME: this needs a decrypted frame!
+                let mut mac = Cmac::<Aes128>::new_from_slice(app_key).unwrap();
+                let end = self.bytes().len() - 4;
+                mac.update(&self.bytes()[..end]);
                 mac.finalize().into_bytes().as_slice()[..4]
                     .try_into()
                     .unwrap()
@@ -132,8 +165,9 @@ impl<'a> PhyPayload<'a> {
         }
     }
 
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, PhyPayloadDecodeError> {
-        let have = bytes.len();
+    pub fn from_bytes(bytes: T) -> Result<Self, PhyPayloadDecodeError> {
+        let b = bytes.as_ref();
+        let have = b.len();
         {
             let need = 1 + 7 + 4;
             if have < need {
@@ -456,11 +490,13 @@ impl<'a> JoinAccept<'a> {
         }
     }
 
-    pub fn calculate_nwkskey(&self) -> [u8; 16] {
+    /// NwkSKey
+    pub fn calculate_network_session_key(&self) -> [u8; 16] {
         todo!()
     }
 
-    pub fn calculate_appskey(&self) -> [u8; 16] {
+    /// AppSKey
+    pub fn calculate_app_session_key(&self) -> [u8; 16] {
         todo!()
     }
 }

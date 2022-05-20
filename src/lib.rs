@@ -22,6 +22,8 @@ use embedded_time::{Clock, Instant};
 
 pub use parameters::*;
 
+pub mod state;
+
 pub mod mac;
 pub mod mac_frame;
 mod serde;
