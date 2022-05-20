@@ -6,6 +6,7 @@ use super::DevAddr;
 use crate::serde::*;
 use aes::Aes128;
 use cmac::{Cmac, Mac};
+use core::marker::PhantomData;
 use modular_bitfield::prelude::*;
 
 // Class A:
@@ -36,8 +37,25 @@ use modular_bitfield::prelude::*;
 ///
 #[cfg_attr(features = "defmt", derive(defmt::Debug))]
 #[derive(Clone, Copy)]
-pub struct PhyPayload<T> {
+pub struct PhyPayload<T, S> {
+    _type_state: PhantomData<S>,
     bytes: T,
+}
+
+pub mod decode_state {
+    pub enum Encrypted {}
+    pub enum Decrypted {}
+
+    mod sealed {
+        pub trait Sealed {}
+    }
+
+    pub trait DecodeState: sealed::Sealed {}
+
+    impl sealed::Sealed for Encrypted {}
+    impl sealed::Sealed for Decrypted {}
+    impl DecodeState for Encrypted {}
+    impl DecodeState for Decrypted {}
 }
 
 /// ```norust
@@ -53,7 +71,7 @@ pub enum PhyPayloadDecodeError {
     SmallerThanMinSize { have: usize, need: usize },
 }
 
-impl<T: AsRef<[u8]>> core::fmt::Debug for PhyPayload<T> {
+impl<T: AsRef<[u8]>, S> core::fmt::Debug for PhyPayload<T, S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PhyPayload")
             .field("mac_header", &self.mac_header())
@@ -82,7 +100,8 @@ impl From<JoinAcceptParseError> for PayloadParseError {
     }
 }
 
-impl<T: AsRef<[u8]>> PhyPayload<T> {
+// Offsets, etc, that are valid for all decode states
+impl<T: AsRef<[u8]>, S> PhyPayload<T, S> {
     fn bytes(&self) -> &[u8] {
         self.bytes.as_ref()
     }
@@ -91,6 +110,18 @@ impl<T: AsRef<[u8]>> PhyPayload<T> {
         MacHeader::from_bytes(self.bytes()[0..1].try_into().unwrap())
     }
 
+    pub fn payload_bytes(&self) -> &[u8] {
+        let end = self.bytes().len() - 4;
+        &self.bytes()[1..end]
+    }
+
+    pub fn mic(&self) -> [u8; 4] {
+        let start = self.bytes().len() - 4;
+        self.bytes()[start..].try_into().unwrap()
+    }
+}
+
+impl<T: AsRef<[u8]>> PhyPayload<T, decode_state::Encrypted> {
     pub fn payload(&self) -> Result<Payload<'_>, PayloadParseError> {
         let mh = self.mac_header();
         if mh.major() != 0 {
@@ -104,16 +135,6 @@ impl<T: AsRef<[u8]>> PhyPayload<T> {
             FrameType::JoinAccept => Payload::JoinAccept(JoinAccept::from_bytes(bytes)?),
             _ => Payload::MacPayload(MacPayload { bytes }),
         })
-    }
-
-    pub fn payload_bytes(&self) -> &[u8] {
-        let end = self.bytes().len() - 4;
-        &self.bytes()[1..end]
-    }
-
-    pub fn mic(&self) -> [u8; 4] {
-        let start = self.bytes().len() - 4;
-        self.bytes()[start..].try_into().unwrap()
     }
 
     /*
@@ -175,7 +196,10 @@ impl<T: AsRef<[u8]>> PhyPayload<T> {
             }
         }
 
-        Ok(Self { bytes })
+        Ok(Self {
+            _type_state: PhantomData,
+            bytes,
+        })
     }
 }
 
