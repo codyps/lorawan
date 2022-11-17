@@ -2,12 +2,15 @@
 //!
 //! Contains items defined in LoRaWAN L2 1.0.4, 4. MAC Frame Formats and 6. End-Device Activation
 
-use super::DevAddr;
-use crate::serde::*;
+use core::marker::PhantomData;
+
 use aes::Aes128;
 use cmac::{Cmac, Mac};
-use core::marker::PhantomData;
+use generic_array::GenericArray;
 use modular_bitfield::prelude::*;
+
+use super::DevAddr;
+use crate::serde::*;
 
 // Class A:
 // Following each uplink transmission, the end-device SHALL open one or two receive windows
@@ -45,17 +48,6 @@ pub struct PhyPayload<T, S> {
 pub mod decode_state {
     pub enum Encrypted {}
     pub enum Decrypted {}
-
-    mod sealed {
-        pub trait Sealed {}
-    }
-
-    pub trait DecodeState: sealed::Sealed {}
-
-    impl sealed::Sealed for Encrypted {}
-    impl sealed::Sealed for Decrypted {}
-    impl DecodeState for Encrypted {}
-    impl DecodeState for Decrypted {}
 }
 
 /// ```norust
@@ -121,39 +113,64 @@ impl<T: AsRef<[u8]>, S> PhyPayload<T, S> {
     }
 }
 
-impl<T: AsRef<[u8]>> PhyPayload<T, decode_state::Encrypted> {
-    pub fn payload(&self) -> Result<Payload<'_>, PayloadParseError> {
-        let mh = self.mac_header();
-        if mh.major() != 0 {
-            return Err(PayloadParseError::UnknownMajor { major: mh.major() });
-        }
-
-        let bytes = self.payload_bytes();
-
-        Ok(match mh.ftype() {
-            FrameType::JoinRequest => Payload::JoinRequest(JoinRequest::from_bytes(bytes)?),
-            FrameType::JoinAccept => Payload::JoinAccept(JoinAccept::from_bytes(bytes)?),
-            _ => Payload::MacPayload(MacPayload { bytes }),
-        })
+impl<T: AsMut<[u8]> + AsRef<[u8]>> PhyPayload<T, decode_state::Encrypted> {
+    fn payload_and_mic_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes_mut()[1..]
     }
 
-    /*
-    JoinNonce is a non-repeating value provided by the Join Server and used by the end-device
-    to derive the two session keys NwkSKey and AppSKey, which SHALL be calculated as
-    follows:10
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        self.bytes.as_mut()
+    }
 
-    NwkSKey = aes128_encrypt(AppKey, 0x01 | JoinNonce | NetID | DevNonce | pad16)
-    AppSKey = aes128_encrypt(AppKey, 0x02 | JoinNonce | NetID | DevNonce | pad16)
-    The MIC value for a Join-Accept frame SHALL be calculated as follows:11
+    // TODO: we should also validate the MIC here or somewhere around here
+    pub fn decrypt_in_place(
+        &mut self,
+        app_key: &[u8],
+        app_session_key: &[u8],
+        network_session_key: &[u8],
+    ) -> Result<(), ()> {
+        let mhdr = self.mac_header();
 
-    CMAC = aes128_cmac(AppKey, MHDR | JoinNonce | NetID | DevAddr |
-    DLSettings | RXDelay | CFList)
-    MIC = CMAC[0..3]
-    The Join-Accept frame itself SHALL be encrypted with the AppKey as follows:
+        match mhdr.ftype() {
+            // join requests aren't encrypted
+            FrameType::JoinRequest => {}
 
-    aes128_decrypt(AppKey, JoinNonce | NetID | DevAddr | DLSettings | RXDelay |
-    CFList | MIC)
-    */
+            FrameType::JoinAccept => {
+                // Encyption: aes128_decrypt(AppKey, JoinNonce | NetID | DevAddr | DLSettings | RXDelay | CFList | MIC)
+                let aes = <Aes128 as cipher::KeyInit>::new_from_slice(app_key).unwrap();
+                //aes.encrypt_block_inout(inout::InOutBuf::from_mut(self.bytes_mut().try_into().unwrap());
+                cipher::BlockEncrypt::encrypt_block_inout(
+                    &aes,
+                    GenericArray::from_mut_slice(self.bytes_mut()).into(),
+                );
+                todo!()
+            }
+            FrameType::UnconfirmedDataUplink => {
+                todo!()
+            }
+            FrameType::ConfirmedDataUplink => {
+                todo!()
+            }
+            FrameType::UnconfirmedDataDownlink => {
+                todo!()
+            }
+            FrameType::ConfirmedDataDownlink => {
+                todo!()
+            }
+            FrameType::Proprietary => {
+                todo!()
+            }
+            FrameType::Rfu => {
+                todo!()
+            }
+        }
+
+        todo!("check the mic");
+    }
+}
+
+impl<T: AsRef<[u8]>> PhyPayload<T, decode_state::Decrypted> {
+    // The mic _generally_ requires a decyrpted payload to validate
     pub fn mic_expected(&self, app_key: &[u8]) -> [u8; 4] {
         let mhdr = self.mac_header();
         match mhdr.ftype() {
@@ -184,6 +201,23 @@ impl<T: AsRef<[u8]>> PhyPayload<T, decode_state::Encrypted> {
             }
             _ => todo!(),
         }
+    }
+}
+
+impl<T: AsRef<[u8]>> PhyPayload<T, decode_state::Encrypted> {
+    pub fn payload(&self) -> Result<Payload<'_>, PayloadParseError> {
+        let mh = self.mac_header();
+        if mh.major() != 0 {
+            return Err(PayloadParseError::UnknownMajor { major: mh.major() });
+        }
+
+        let bytes = self.payload_bytes();
+
+        Ok(match mh.ftype() {
+            FrameType::JoinRequest => Payload::JoinRequest(JoinRequest::from_bytes(bytes)?),
+            FrameType::JoinAccept => Payload::JoinAccept(JoinAccept::from_bytes(bytes)?),
+            _ => Payload::MacPayload(MacPayload { bytes }),
+        })
     }
 
     pub fn from_bytes(bytes: T) -> Result<Self, PhyPayloadDecodeError> {
